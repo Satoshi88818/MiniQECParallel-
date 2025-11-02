@@ -1,0 +1,170 @@
+# MiniQEC: Lightweight Quantum Error Correction for Mobile Devices
+
+## Overview
+
+MiniQEC is a compact, mobile-optimized quantum error correction (QEC) system designed for the 5-qubit repetition code. It leverages reinforcement learning (Parallel Mini DQN with ensemble consensus), a tiny LSTM for syndrome prediction, prioritized experience replay, and simulated FPGA acceleration. The system adapts to phone-specific noise sources:
+
+- Depolarizing errors
+- Thermal relaxation (T1/T2)
+- Temperature-induced drift
+- RF interference
+- EMI
+
+Key goals: **high logical error rate (LER) reduction**, **low latency**, **minimal power/memory footprint**, and **robustness under dynamic mobile conditions**.
+
+The agent learns to select bit-flip corrections (or "do nothing") based on 4-bit syndrome measurements, achieving correction in ≤5 steps.
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **ParallelMiniDQN** | 4 lightweight sub-DQNs (12→6→6 neurons each) with averaged Q-values for stability. |
+| **Internodes Consensus** | Weighted voting across sub-networks (confidence threshold 0.7). |
+| **TinyLSTM Predictor** | 8-hidden-unit (or 4 on low-RAM) bidirectional-optional LSTM for next-syndrome forecasting. |
+| **Mock FPGA Inference** | 8-bit quantized inference with 5–10 μs simulated latency. |
+| **Prioritized Replay** | Sum-tree PER with α/β annealing. |
+| **Double DQN + Huber** | Stable TD learning with target network updates every 50 steps. |
+| **Dynamic Quantization** | `torch.quantization.quantize_dynamic` (qint8) for CPU offload. |
+| **Mobile Resource Guard** | Pauses training if battery <20% or CPU >80%. |
+| **Encrypted Checkpoints** | Fernet-encrypted model saves. |
+| **Early Stopping & LR Plateau** | Patience-based stopping + ReduceLROnPlateau schedulers. |
+| **Comprehensive Testing** | Low/medium/high/dynamic/adversarial noise regimes with bootstrap CI. |
+| **Hyperparameter Tuning** | Optuna + Ray parallel trials (optional). |
+| **Hardware Integration** | Seamless fallback to simulator; optional IBMQ backend (requires Qiskit). |
+
+## Installation
+
+```bash
+# Create a clean environment (recommended)
+python -m venv miniqec_env
+source miniqec_env/bin/activate  # Linux/macOS
+# or
+miniqec_env\Scripts\activate     # Windows
+
+# Install exact versions for reproducibility
+pip install torch==2.0.0 numpy==1.24.3 \
+    cryptography==41.0.3 optuna==3.2.0 ray==2.5.0 \
+    psutil==5.9.5 scipy==1.10.1 pandas==2.0.3 \
+    matplotlib==3.7.1
+```
+
+**Optional (real quantum backend):**
+```bash
+pip install qiskit==0.43.0
+# Then set up IBMQ account:
+# from qiskit import IBMQ
+# IBMQ.save_account('YOUR_TOKEN')
+```
+
+## Usage
+
+### 1. Run Unit Tests
+```bash
+python MiniQECParallel.py
+```
+The script automatically executes `run_unit_tests()` on start.
+
+### 2. Train from Scratch
+```bash
+python MiniQECParallel.py
+```
+- Trains for up to 500 episodes.
+- Logs to `miniqec.log`, CSV (`training_metrics.csv`), JSON (`training_metrics.json`).
+- Saves encrypted checkpoints (`miniqec_dqn_*.pth`).
+- Profiling dumps every 100 episodes.
+
+### 3. Hyperparameter Tuning (50 Optuna trials)
+```bash
+python MiniQECParallel.py
+```
+(Tuning runs automatically if Ray/Optuna are installed; skips otherwise.)
+
+### 4. Resume with Pretrained Model
+```bash
+python MiniQECParallel.py --pretrained_path miniqec_dqn_best.pth
+```
+(Implement CLI flags as needed or modify `train_miniqec` call.)
+
+### 5. Test Trained Agent
+After training, the script calls `test_miniqec` and writes `test_results.json`.
+
+Manual test:
+```python
+from MiniQECParallel import MiniQECAgent, test_miniqec, QuantumPhoneEnv
+
+agent = MiniQECAgent()
+# Load encrypted weights here...
+results = test_miniqec(agent, trials=200)
+print(results)
+```
+
+### 6. Deploy on Device
+- Export quantized model:
+  ```python
+  torch.jit.script(agent.dqn).save("miniqec_quantized.pt")
+  ```
+- Port inference loop to Android/iOS via TorchScript or ONNX.
+
+## Hardware / Software Requirements
+
+| Category | Minimum | Recommended |
+|----------|---------|-------------|
+| **OS** | Linux, macOS, Windows, Android (via Chaquopy/ONNX) | Linux/macOS |
+| **Python** | 3.8–3.11 | 3.10 |
+| **CPU** | ARM64 (mobile) or x86_64 | Snapdragon 8 Gen 2 / Apple M1+ |
+| **RAM** | 2 GB free (auto-downgrades LSTM) | 4 GB+ |
+| **Storage** | 50 MB | 200 MB (logs + checkpoints) |
+| **GPU/FPGA** | None (CPU only) | Optional FPGA for real acceleration |
+
+## File Outputs
+
+- `miniqec.log` – Detailed training/inference logs.
+- `training_metrics.csv` / `training_metrics.json` – Episode metrics.
+- `miniqec_dqn_*.pth` – Encrypted PyTorch checkpoints.
+- `test_results.json` – Success rates, LER, steps, 95% CI per noise condition.
+- `profiling_results_*.txt` – Torch profiler dumps.
+
+## Security Notes
+
+- Model weights are **AES-encrypted** via Fernet.
+- Encryption key is generated per run; persist it for loading:
+  ```python
+  key = Fernet.generate_key()
+  with open("secret.key", "wb") as f:
+      f.write(key)
+  ```
+
+## Limitations & Future Work
+
+- Pure simulation (no real 5-qubit hardware by default).
+- Fixed 5-qubit code; extensible to surface codes.
+- No multi-agent coordination yet.
+- FPGA path is mocked; replace `MockFPGA.simulate_inference` with real HLS kernel.
+
+## License
+
+MIT License. Free for research, education, and commercial use.
+
+---
+
+**requirements.txt**
+
+```
+torch==2.0.0
+numpy==1.24.3
+cryptography==41.0.3
+optuna==3.2.0
+ray==2.5.0
+psutil==5.9.5
+scipy==1.10.1
+pandas==2.0.3
+matplotlib==3.7.1
+# Optional
+qiskit==0.43.0
+```
+
+Copy the block above into a file named `requirements.txt` and install via:
+
+```bash
+pip install -r requirements.txt
+```
